@@ -1,0 +1,32 @@
+# Ignorer store og unødvendige filer
+# 🐍 Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# 🔐 Miljøvariabler
+.env
+
+# 🧠 Virtuelle miljøer
+venv/
+VENV/
+.env/
+*.env
+
+# 🧰 VS Code og IDE-filer
+.vscode/
+*.code-workspace
+
+# 📦 Node.js (hvis du har brukt det)
+node_modules/
+package-lock.json
+
+# 📁 Store og unødvendige filer
+*.zip
+*.mp4
+*.docx
+*.exe
+
+# 📄 Render og deploy
+render.yaml
