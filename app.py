@@ -3,9 +3,9 @@ from flask import Flask, request, jsonify
 app = Flask(__name__)
 
 # Test-endepunkt for Render
-@app.route("/", methods=["GET"])
-def home():
-    return "SATS-bot backend kjører! 🚀", 200
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
 
 # API-endepunkt for åpningstider
 @app.route("/opening-hours", methods=["POST"])
