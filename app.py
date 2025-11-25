@@ -21,12 +21,19 @@ def opening_hours():
 
     svar = åpningstider.get(gym_navn, {"weekday": "Ukjent", "weekend": "Ukjent"})
 
+    # 🔥 Landbot-klar streng
+    reply_text = (
+        f"Åpningstidene for {gym_navn}:\n"
+        f"• Ukedager: {svar['weekday']}\n"
+        f"• Helg: {svar['weekend']}"
+    )
+
+    # 🔥 Nå returnerer API-et en nøkkel som Landbot kan mappe!
     return jsonify({
-        "senter": gym_navn,
-        "ukedager": svar["weekday"],
-        "helg": svar["weekend"]
+        "reply": reply_text
     })
 
 # Lokalt kjøring – Render bruker gunicorn via Procfile
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
