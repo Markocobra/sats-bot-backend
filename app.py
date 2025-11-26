@@ -2,38 +2,67 @@ from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
-# Test-endepunkt for Render
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok"}), 200
+    return jsonify({"status": "ok"})
 
-# API-endepunkt for åpningstider
-@app.route("/opening-hours", methods=["POST"])
-def opening_hours():
+
+@app.route("/chatbot", methods=["POST"])
+def chatbot():
     data = request.get_json()
-    gym_navn = data.get("senter", "").strip()
+    question = data.get("question", "").lower().strip()
 
-    åpningstider = {
-        "Storo": {"weekday": "06:00-22:00", "weekend": "08:00-20:00"},
-        "Nydalen": {"weekday": "06:00-22:00", "weekend": "08:00-20:00"},
-        "Bislett": {"weekday": "06:00-22:00", "weekend": "09:00-18:00"},
+    # --- 1) Åpningstider ---
+    opening_hours = {
+        "storo": {"weekday": "06:00-22:00", "weekend": "08:00-20:00"},
+        "nydalen": {"weekday": "06:00-22:00", "weekend": "08:00-20:00"},
+        "bislett": {"weekday": "06:00-22:00", "weekend": "09:00-18:00"},
     }
 
-    svar = åpningstider.get(gym_navn, {"weekday": "Ukjent", "weekend": "Ukjent"})
+    for center in opening_hours:
+        if center in question:
+            tider = opening_hours[center]
+            reply = (
+                f"Åpningstidene for {center.capitalize()}:\n"
+                f"• Ukedager: {tider['weekday']}\n"
+                f"• Helg: {tider['weekend']}"
+            )
+            return jsonify({"reply": reply})
 
-    # 🔥 Landbot-klar streng
-    reply_text = (
-        f"Åpningstidene for {gym_navn}:\n"
-        f"• Ukedager: {svar['weekday']}\n"
-        f"• Helg: {svar['weekend']}"
+    # --- 2) Medlemskap ---
+    if "pris" in question or "medlemskap" in question:
+        return jsonify({"reply":
+            "Et SATS-medlemskap koster fra 549–749 kr/mnd avhengig av type. "
+            "Vil du at jeg skal sende prislisten?"
+        })
+
+    # --- 3) Gruppetimer ---
+    if "timer" in question or "gruppetimer" in question:
+        return jsonify({"reply":
+            "For gruppetimer, sjekk SATS-appen eller nettsiden. "
+            "Hvilket senter vil du trene på?"
+        })
+
+    # --- 4) PT ---
+    if "pt" in question or "personlig trener" in question:
+        return jsonify({"reply":
+            "Personlig trener starter fra 699 kr per time. "
+            "Vil du at jeg skal finne PT-er for et bestemt senter?"
+        })
+
+    # --- 5) Standard fallback ---
+    reply = (
+        "Dette forstod jeg ikke helt 💡\n"
+        "Prøv å spørre om:\n"
+        "• Åpningstider\n"
+        "• Medlemskap & priser\n"
+        "• Gruppetimer\n"
+        "• PT\n\n"
+        "Hva vil du vite?"
     )
 
-    # 🔥 Nå returnerer API-et en nøkkel som Landbot kan mappe!
-    return jsonify({
-        "reply": reply_text
-    })
+    return jsonify({"reply": reply})
 
-# Lokalt kjøring – Render bruker gunicorn via Procfile
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
