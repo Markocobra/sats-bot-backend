@@ -1,79 +1,53 @@
-from flask import Flask, request, jsonify
-import requests
-import re
 import os
+import requests
+from flask import Flask, request, jsonify
+from bs4 import BeautifulSoup
+from openai import OpenAI
 
 app = Flask(__name__)
 
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 WP_API_URL = "https://adamogeva.no/wp-json/wp/v2/pages?per_page=100"
 
-def clean_html(html):
-    if not html:
-        return ""
-    return re.sub(r"<[^>]+>", "", html)
+def fetch_pages():
+    res = requests.get(WP_API_URL, timeout=15)
+    res.raise_for_status()
+    return res.json()
 
-@app.route("/", methods=["GET"])
-def health():
-    return "OK", 200
+def clean_html(html):
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text(separator=" ", strip=True)
+
+def build_knowledge_base():
+    pages = fetch_pages()
+    docs = []
+
+    for page in pages:
+        title = page.get("title", {}).get("rendered", "")
+        content = page.get("content", {}).get("rendered", "")
+        text = clean_html(content)
+
+        if text:
+            docs.append(f"TITTEL: {title}\nINNHOLD: {text}")
+
+    return "\n\n---\n\n".join(docs)
+
+# ⚠️ bygges én gang ved oppstart
+KNOWLEDGE_BASE = build_knowledge_base()
 
 @app.route("/fetch-answer", methods=["POST"])
 def fetch_answer():
-    # 🔒 Trygg parsing – krasjer aldri
     data = request.get_json(silent=True) or {}
+    question = data.get("question", "").strip()
 
-    question = data.get("question")
-
-    # ✅ Valider input
-    if not isinstance(question, str) or not question.strip():
+    if not question:
         return jsonify({
-            "answer": "Jeg mottok ikke noe spørsmål. Prøv å skrive det én gang til 🙂"
-        }), 200
-
-    question = question.lower().strip()
-
-    # 🔄 Hent sider fra WordPress
-    try:
-        r = requests.get(
-            WP_API_URL,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=10
-        )
-        r.raise_for_status()
-        pages = r.json()
-    except Exception:
-        return jsonify({
-            "answer": "Jeg fikk ikke kontakt med nettsiden akkurat nå."
-        }), 200
-
-    # 🔍 Søk i sider
-    for page in pages:
-        title = clean_html(page.get("title", {}).get("rendered", "")).lower()
-        content = clean_html(page.get("content", {}).get("rendered", "")).lower()
-
-        if question in title or question in content:
-            return jsonify({
-                "answer": clean_html(page.get("content", {}).get("rendered", ""))[:1200]
-            }), 200
-
-    # 🤷‍♂️ Fallback
-    return jsonify({
-        "answer": "Jeg fant ikke et direkte svar på adamogeva.no."
-    }), 200
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-
-keywords = question.split()
-
-for page in pages:
-    content = clean_html(page.get("content", {}).get("rendered", "")).lower()
-    title = clean_html(page.get("title", {}).get("rendered", "")).lower()
-
-    score = sum(1 for k in keywords if k in content or k in title)
-
-    if score >= 2:
-        return jsonify({
-            "answer": clean_html(page["content"]["rendered"])[:1200]
+            "answer": "Jeg fikk ikke med meg spørsmålet ditt."
         })
+
+    prompt = f"""
+Du er kundeservice-chatbot for frisørkjeden Adam og Eva.
+
+Svar KUN basert på informasjonen under.
+Hvis svaret ikke finnes i teksten, si tydelig at det ikke fi
