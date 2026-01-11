@@ -5,7 +5,7 @@ import os
 
 app = Flask(__name__)
 
-WP_API_URL = "https://adamogeva.no/wp-json/wp/v2/pages"
+WP_API_URL = "https://adamogeva.no/wp-json/wp/v2/pages?per_page=100"
 
 def clean_html(html):
     if not html:
