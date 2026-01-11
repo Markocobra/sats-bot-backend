@@ -64,3 +64,16 @@ def fetch_answer():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
+keywords = question.split()
+
+for page in pages:
+    content = clean_html(page.get("content", {}).get("rendered", "")).lower()
+    title = clean_html(page.get("title", {}).get("rendered", "")).lower()
+
+    score = sum(1 for k in keywords if k in content or k in title)
+
+    if score >= 2:
+        return jsonify({
+            "answer": clean_html(page["content"]["rendered"])[:1200]
+        })
