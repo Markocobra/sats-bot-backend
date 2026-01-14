@@ -48,10 +48,10 @@ def fetch_answer():
         })
 
     prompt = f"""
-Du er en hjelpsom kundeservice-chatbot for frisørkjeden Adam og Eva.
+Du er kundeservice-chatbot for frisørkjeden Adam og Eva.
 
 Svar KUN basert på informasjonen under.
-Hvis svaret ikke finnes i teksten, si tydelig at du ikke finner det på adamogeva.no.
+Hvis svaret ikke finnes i teksten, si tydelig at du ikke finner det.
 
 INFORMASJON:
 {KNOWLEDGE_BASE}
@@ -63,16 +63,11 @@ SPØRSMÅL:
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
+            {"role": "system", "content": "Du er en hjelpsom kundeservice-chatbot."},
             {"role": "user", "content": prompt}
         ]
     )
 
-    answer = response.choices[0].message.content.strip()
-
     return jsonify({
-        "answer": answer
+        "answer": response.choices[0].message.content.strip()
     })
-
-@app.route("/")
-def health():
-    return "OK"
