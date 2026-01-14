@@ -6,6 +6,7 @@ from openai import OpenAI
 
 app = Flask(__name__)
 
+# OpenAI-klient (leser nøkkel fra Render Environment)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 WP_API_URL = "https://adamogeva.no/wp-json/wp/v2/pages?per_page=100"
@@ -47,7 +48,31 @@ def fetch_answer():
         })
 
     prompt = f"""
-Du er kundeservice-chatbot for frisørkjeden Adam og Eva.
+Du er en hjelpsom kundeservice-chatbot for frisørkjeden Adam og Eva.
 
 Svar KUN basert på informasjonen under.
-Hvis svaret ikke finnes i teksten, si tydelig at det ikke fi
+Hvis svaret ikke finnes i teksten, si tydelig at du ikke finner det på adamogeva.no.
+
+INFORMASJON:
+{KNOWLEDGE_BASE}
+
+SPØRSMÅL:
+{question}
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    answer = response.choices[0].message.content.strip()
+
+    return jsonify({
+        "answer": answer
+    })
+
+@app.route("/")
+def health():
+    return "OK"
