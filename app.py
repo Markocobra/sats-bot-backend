@@ -76,6 +76,20 @@ def fetch_answer():
 
     if not question:
         return jsonify({"answer": "Jeg mottok ikke noe spørsmål."})
+question = (
+    data.get("user_input")
+    or data.get("message")
+    or data.get("text")
+    or data.get("question")
+    or ""
+)
+
+print("🔍 Spørsmål mottatt:", question)
+
+if not question:
+    return jsonify({"answer": "Jeg mottok ikke noe spørsmål."})
+
+
 
     # Send spørsmålet til OpenAI
     response = client.chat.completions.create(
