@@ -1,73 +1,63 @@
-import os
-import requests
 from flask import Flask, request, jsonify
-from bs4 import BeautifulSoup
 from openai import OpenAI
+import os
 
 app = Flask(__name__)
 
-# OpenAI-klient (leser nøkkel fra Render Environment)
+# OpenAI-klient (Render: legg inn OPENAI_API_KEY i Environment)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-WP_API_URL = "https://adamogeva.no/wp-json/wp/v2/pages?per_page=100"
+# Systemprompt – gir modellen rollen sin
+SYSTEM_PROMPT = """
+Du er en hjelpsom chatbot for frisørkjeden Adam og Eva.
+Du svarer på spørsmål om:
+- behandlinger
+- priser
+- åpningstider
+- booking
+- produkter
+- generelle spørsmål om frisørkjeden
 
-def fetch_pages():
-    res = requests.get(WP_API_URL, timeout=15)
-    res.raise_for_status()
-    return res.json()
-
-def clean_html(html):
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(separator=" ", strip=True)
-
-def build_knowledge_base():
-    pages = fetch_pages()
-    docs = []
-
-    for page in pages:
-        title = page.get("title", {}).get("rendered", "")
-        content = page.get("content", {}).get("rendered", "")
-        text = clean_html(content)
-
-        if text:
-            docs.append(f"TITTEL: {title}\nINNHOLD: {text}")
-
-    return "\n\n---\n\n".join(docs)
-
-# ⚠️ bygges én gang ved oppstart
-KNOWLEDGE_BASE = build_knowledge_base()
+Hvis du ikke vet svaret, si det på en profesjonell måte.
+Svar alltid på norsk.
+"""
 
 @app.route("/fetch-answer", methods=["POST"])
 def fetch_answer():
-    data = request.get_json(silent=True) or {}
-    question = data.get("question", "").strip()
+    data = request.json
+
+    # Landbot sender vanligvis "user_input", men sjekk hva du bruker
+    question = (
+        data.get("user_input")
+        or data.get("message")
+        or data.get("text")
+        or data.get("question")
+        or ""
+    )
+
+    print("🔍 Spørsmål mottatt:", question)
 
     if not question:
-        return jsonify({
-            "answer": "Jeg fikk ikke med meg spørsmålet ditt."
-        })
+        return jsonify({"answer": "Jeg mottok ikke noe spørsmål."})
 
-    prompt = f"""
-Du er kundeservice-chatbot for frisørkjeden Adam og Eva.
-
-Svar KUN basert på informasjonen under.
-Hvis svaret ikke finnes i teksten, si tydelig at du ikke finner det.
-
-INFORMASJON:
-{KNOWLEDGE_BASE}
-
-SPØRSMÅL:
-{question}
-"""
-
+    # Send spørsmålet til OpenAI
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "Du er en hjelpsom kundeservice-chatbot."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question}
         ]
     )
 
-    return jsonify({
-        "answer": response.choices[0].message.content.strip()
-    })
+    answer = response.choices[0].message.content.strip()
+
+    return jsonify({"answer": answer})
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Adam og Eva chatbot backend kjører."
+
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=10000)
