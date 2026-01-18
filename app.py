@@ -203,12 +203,14 @@ def fetch_answer():
     brand_key = data.get("brand") or DEFAULT_BRAND
     brand_conf = CONFIG[brand_key]
 
-    question = (
-        data.get("message")
-        or data.get("text")
-        or data.get("question")
-        or ""
-    ).strip()
+ question = (
+    data.get("user_input")   # Landbot
+    or data.get("message")
+    or data.get("text")
+    or data.get("question")
+    or ""
+).strip()
+
 
     if not question:
         return jsonify({
