@@ -5,13 +5,15 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
-app = Flask(__name__)
+# -------------------------
+# APP & OPENAI
+# -------------------------
 
-# OpenAI – nøkkel hentes fra Render
+app = Flask(__name__)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -------------------------
-# KONFIG: BRAND
+# KONFIG
 # -------------------------
 
 LANEKASSEN_URL = "https://lanekassen.no/nb-NO/"
@@ -25,8 +27,9 @@ CONFIG = {
             "price": "https://adamogeva.no/prisliste/",
             "booking": "https://adamogeva.no/bestill-time/",
             "salon_info": "https://adamogeva.no/salonger/",
-            "academy": "https://adamogeva.no/akademiet/",
+            "academy": "https://akademiet.adamogeva.no/",
             "school": "https://adamogeva.no/skolen/",
+            "apprenticeship": "https://adamogeva.no/salonger/",
             "contact": "https://adamogeva.no/kontakt-oss/"
         }
     }
@@ -40,34 +43,81 @@ DEFAULT_BRAND = "adam_og_eva"
 
 def scrape_page_text(url: str) -> str:
     try:
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
     except Exception:
         return ""
 
-    soup = BeautifulSoup(response.text, "html.parser")
+    soup = BeautifulSoup(r.text, "html.parser")
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
     text = soup.get_text(separator="\n")
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    cleaned_text = "\n".join(lines)
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    return "\n".join(lines)[:8000]
 
-    return cleaned_text[:8000]
+
+def fetch_from_wp_api(intent: str) -> tuple[str, str]:
+    """
+    Forsøker å hente tekst fra WordPress REST API.
+    Returnerer (tekst, kilde_url) eller ("", "")
+    """
+    try:
+        if intent in ["school", "academy"]:
+            search = "akademi skole utdanning"
+        elif intent in ["salon_info", "apprenticeship"]:
+            search = "salong"
+        elif intent == "price":
+            search = "pris prisliste"
+        else:
+            return "", ""
+
+        url = (
+            "https://adamogeva.no/wp-json/wp/v2/pages"
+            f"?search={search}&per_page=3"
+        )
+
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        pages = resp.json()
+
+        if not pages:
+            return "", ""
+
+        texts = []
+        source_url = pages[0].get("link", "")
+
+        for page in pages:
+            title = page.get("title", {}).get("rendered", "")
+            html = page.get("content", {}).get("rendered", "")
+            soup = BeautifulSoup(html, "html.parser")
+            text = soup.get_text(separator="\n")
+            texts.append(f"{title}\n{text}")
+
+        return "\n\n".join(texts)[:8000], source_url
+
+    except Exception:
+        return "", ""
 
 
 def classify_intent(question: str, brand_name: str) -> str:
     system_prompt = f"""
 Du er en intensjonsklassifiserer for chatboten til {brand_name}.
-Svar kun med én etikett:
+Svar KUN med én av disse etikettene:
 
 price
 booking
 salon_info
 academy
 school
+apprenticeship
 contact
 general
+
+REGLER:
+- LÆRLING / LÆREPLASS → apprenticeship
+- ELEV / SKOLE / UTDANNING → school
+- AKADEMI / KURS → academy
 """
 
     resp = client.chat.completions.create(
@@ -79,42 +129,54 @@ general
     )
 
     label = resp.choices[0].message.content.strip().lower()
-    if label not in CONFIG[DEFAULT_BRAND]["intents"]:
-        label = "general"
-    return label
+    return label if label in CONFIG[DEFAULT_BRAND]["intents"] else "general"
 
-def build_answer_from_scrape(question: str, brand_conf: dict, intent: str) -> dict:
-    url = brand_conf["intents"].get(intent, brand_conf["base_url"])
-    scraped_text = scrape_page_text(url)
 
-    authoritative_facts = ""
-    references = [url]
+def build_answer(question: str, brand_conf: dict, intent: str) -> dict:
+    references = []
+    authoritative = ""
 
+    # Autoritative fakta
     if intent == "school":
-        authoritative_facts = f"""
-AUTORITATIV INFORMASJON (GJELDER ALLTID):
+        authoritative = f"""
+AUTORITATIV INFORMASJON:
 - Frisørutdanningen hos Adam og Eva koster {SCHOOL_PRICE}
 - Skolen er støttet av Lånekassen
-- Lånekassen: {LANEKASSEN_URL}
+- {LANEKASSEN_URL}
 """
         references.append(LANEKASSEN_URL)
 
+    # 1) Prøv REST API
+    api_text, api_source = fetch_from_wp_api(intent)
+
+    if api_text:
+        content = api_text
+        source_type = "REST API"
+        if api_source:
+            references.append(api_source)
+    else:
+        # 2) Fallback: scraping
+        url = brand_conf["intents"].get(intent, brand_conf["base_url"])
+        content = scrape_page_text(url)
+        source_type = "SCRAPING"
+        references.append(url)
+
     system_prompt = f"""
 Du er kundeservice-chatbot for {brand_conf["name"]}.
-Svar ALLTID på norsk.
+Svar alltid på norsk.
 
-VIKTIGE REGLER:
-- Du kan bruke informasjon fra TO kilder:
-  1) AUTORITATIV INFORMASJON (øverst)
-  2) NETTSIDETEKST (nedenfor)
-- Ikke spekuler utover disse.
-- Hvis svaret ikke finnes i noen av dem, si det tydelig.
-- Inkluder relevante lenker i svaret.
+REGLER:
+- Bruk kun informasjon fra:
+  1) Autoritative fakta
+  2) {source_type}
+- Ikke spekuler.
+- Ikke bland elev og lærling.
+- Ikke gi salonglenker uten at bruker spør om salong.
 
-{authoritative_facts}
+{authoritative}
 
-NETTSIDETEKST (fra {url}):
-{scraped_text}
+INNHOLD:
+{content}
 """
 
     resp = client.chat.completions.create(
@@ -127,29 +189,11 @@ NETTSIDETEKST (fra {url}):
 
     return {
         "answer": resp.choices[0].message.content.strip(),
-        "references": references
+        "references": list(set(references))
     }
-
-
-
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ]
-    )
-
-    answer = resp.choices[0].message.content.strip()
-
-    return {
-        "answer": answer,
-        "references": [url] + ([LANEKASSEN_URL] if intent == "school" else [])
-    }
-
 
 # -------------------------
-# FLASK-RUTER
+# ROUTES
 # -------------------------
 
 @app.route("/fetch-answer", methods=["POST"])
@@ -157,11 +201,10 @@ def fetch_answer():
     data = request.json or {}
 
     brand_key = data.get("brand") or DEFAULT_BRAND
-    brand_conf = CONFIG.get(brand_key, CONFIG[DEFAULT_BRAND])
+    brand_conf = CONFIG[brand_key]
 
     question = (
-        data.get("user_input")
-        or data.get("message")
+        data.get("message")
         or data.get("text")
         or data.get("question")
         or ""
@@ -173,9 +216,8 @@ def fetch_answer():
         })
 
     intent = classify_intent(question, brand_conf["name"])
-    result = build_answer_from_scrape(question, brand_conf, intent)
+    result = build_answer(question, brand_conf, intent)
 
-    # Logging (kan byttes til DB)
     print({
         "timestamp": datetime.utcnow().isoformat(),
         "question": question,
