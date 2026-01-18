@@ -3,14 +3,19 @@ from openai import OpenAI
 import os
 import requests
 from bs4 import BeautifulSoup
+from datetime import datetime
 
 app = Flask(__name__)
 
+# OpenAI – nøkkel hentes fra Render
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -------------------------
-# KONFIG: KUNDER / BRANDS
+# KONFIG: BRAND
 # -------------------------
+
+LANEKASSEN_URL = "https://lanekassen.no/nb-NO/"
+SCHOOL_PRICE = "89 000 kr"
 
 CONFIG = {
     "adam_og_eva": {
@@ -34,68 +39,35 @@ DEFAULT_BRAND = "adam_og_eva"
 # -------------------------
 
 def scrape_page_text(url: str) -> str:
-    """
-    Henter og renser tekst fra en nettside.
-    """
     try:
-        print(f"🌐 Henter URL: {url}")
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-    except Exception as e:
-        print("❌ Klarte ikke å hente URL:", url, e)
+    except Exception:
         return ""
 
     soup = BeautifulSoup(response.text, "html.parser")
-
-    # Fjern støy
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
     text = soup.get_text(separator="\n")
-    lines = [line.strip() for line in text.splitlines()]
-    lines = [line for line in lines if line]
-
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
     cleaned_text = "\n".join(lines)
 
-    max_chars = 8000
-    if len(cleaned_text) > max_chars:
-        cleaned_text = cleaned_text[:max_chars]
-
-    print(f"📄 Lengde på skrapet tekst: {len(cleaned_text)}")
-    return cleaned_text
+    return cleaned_text[:8000]
 
 
 def classify_intent(question: str, brand_name: str) -> str:
-    """
-    Bruker en liten OpenAI-modell til å finne intensjon.
-    Returnerer én av:
-    - price
-    - booking
-    - salon_info
-    - academy
-    - school
-    - contact
-    - general
-    """
     system_prompt = f"""
-Du er en intensjonsklassifiserer for en chatbot for {brand_name}.
-Du skal kun svare med én av disse etikettene (ingenting annet):
+Du er en intensjonsklassifiserer for chatboten til {brand_name}.
+Svar kun med én etikett:
 
-- price
-- booking
-- salon_info
-- academy
-- school
-- contact
-- general
-
-price: når brukeren spør om priser, kostnad, hva noe koster, prisliste, behandlinger.
-booking: når brukeren spør om å bestille time, booke, avbestille, endre time.
-salon_info: når brukeren spør om spesifikk salong, adresse, telefonnummer, åpningstider, lokasjon.
-academy: når brukeren spør om kurs, akademi, opplæring for frisører.
-school: når brukeren spør om frisørskole, utdanning, skole.
-contact: når brukeren spør om kontakt, kundeservice, e-post, generelle henvendelser.
-general: alt annet.
+price
+booking
+salon_info
+academy
+school
+contact
+general
 """
 
     resp = client.chat.completions.create(
@@ -107,41 +79,42 @@ general: alt annet.
     )
 
     label = resp.choices[0].message.content.strip().lower()
-    print("🎯 Intent klassifisert som:", label)
-    # fallback hvis modellen tuller
-    if label not in [
-        "price", "booking", "salon_info",
-        "academy", "school", "contact", "general"
-    ]:
+    if label not in CONFIG[DEFAULT_BRAND]["intents"]:
         label = "general"
     return label
 
 
-def build_answer_from_scrape(question: str, brand_conf: dict, intent: str) -> str:
-    """
-    Scraper riktig URL basert på intent og lar OpenAI svare kun basert på den teksten.
-    """
-    intents_conf = brand_conf.get("intents", {})
-    url = intents_conf.get(intent)
-
-    # Hvis vi ikke har en spesifikk URL for denne intensjonen, bruk base_url
-    if not url:
-        url = brand_conf.get("base_url")
-
+def build_answer_from_scrape(question: str, brand_conf: dict, intent: str) -> dict:
+    url = brand_conf["intents"].get(intent, brand_conf["base_url"])
     scraped_text = scrape_page_text(url)
 
+    # Spesialregler – kun når relevant
+    extra_facts = ""
+
+    if intent == "school":
+        extra_facts = f"""
+VIKTIG EKSTRA INFORMASJON:
+- Frisørutdanningen koster {SCHOOL_PRICE}
+- Skolen er støttet av Lånekassen
+- Lenke til Lånekassen: {LANEKASSEN_URL}
+"""
+
     system_prompt = f"""
-Du er en hjelpsom chatbot for {brand_conf.get("name")}.
-Svar alltid på norsk.
-Svar hyggelig og profesjonelt.
-Du skal svare KUN basert på teksten under. Ikke gjett.
-Hvis du ikke finner svaret, si at du ikke finner det i informasjonen du har.
+Du er kundeservice-chatbot for {brand_conf["name"]}.
+Du skal ALLTID svare på norsk.
+
+REGLER (MÅ FØLGES):
+- Bruk KUN informasjon som finnes i teksten nedenfor.
+- Ikke spekuler, ikke forklar, ikke utvid.
+- Hvis svaret ikke finnes: si at du ikke fant informasjon.
+- Inkluder ALLTID lenke til aktuell side når du svarer.
+- Ikke vis salonglenker med mindre bruker spør om salong.
+- Skill mellom elev (Akademiet) og lærling (salong).
+
+{extra_facts}
 
 NETTSIDETEKST (fra {url}):
-
 {scraped_text}
-
-Når det er naturlig, legg ved lenken {url} i svaret ditt.
 """
 
     resp = client.chat.completions.create(
@@ -153,7 +126,12 @@ Når det er naturlig, legg ved lenken {url} i svaret ditt.
     )
 
     answer = resp.choices[0].message.content.strip()
-    return answer
+
+    return {
+        "answer": answer,
+        "references": [url] + ([LANEKASSEN_URL] if intent == "school" else [])
+    }
+
 
 # -------------------------
 # FLASK-RUTER
@@ -163,39 +141,40 @@ Når det er naturlig, legg ved lenken {url} i svaret ditt.
 def fetch_answer():
     data = request.json or {}
 
-    # Hvilken brand? (kan komme fra Landbot senere)
     brand_key = data.get("brand") or DEFAULT_BRAND
     brand_conf = CONFIG.get(brand_key, CONFIG[DEFAULT_BRAND])
 
-    # Hent spørsmål
     question = (
         data.get("user_input")
         or data.get("message")
         or data.get("text")
         or data.get("question")
         or ""
-    )
-
-    print("🔍 Spørsmål mottatt:", question)
-    print("🏷️ Brand:", brand_key)
+    ).strip()
 
     if not question:
-        return jsonify({"answer": "Jeg mottok ikke noe spørsmål."})
+        return jsonify({
+            "answer": "Hei, og velkommen til Adam og Eva kundeservice-chatbot! Still meg et spørsmål, så svarer jeg deg."
+        })
 
-    # 1) Finn intensjon
-    intent = classify_intent(question, brand_conf.get("name"))
+    intent = classify_intent(question, brand_conf["name"])
+    result = build_answer_from_scrape(question, brand_conf, intent)
 
-    # 2) Bygg svar basert på scraping + intent
-    answer = build_answer_from_scrape(question, brand_conf, intent)
+    # Logging (kan byttes til DB)
+    print({
+        "timestamp": datetime.utcnow().isoformat(),
+        "question": question,
+        "intent": intent,
+        "references": result["references"]
+    })
 
-    return jsonify({"answer": answer})
+    return jsonify(result)
 
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Multibrand chatbot-backend kjører."
+    return "Adam og Eva chatbot-backend kjører."
 
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=10000)
-
