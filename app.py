@@ -83,39 +83,54 @@ general
         label = "general"
     return label
 
-
 def build_answer_from_scrape(question: str, brand_conf: dict, intent: str) -> dict:
     url = brand_conf["intents"].get(intent, brand_conf["base_url"])
     scraped_text = scrape_page_text(url)
 
-    # Spesialregler – kun når relevant
-    extra_facts = ""
+    authoritative_facts = ""
+    references = [url]
 
     if intent == "school":
-        extra_facts = f"""
-VIKTIG EKSTRA INFORMASJON:
-- Frisørutdanningen koster {SCHOOL_PRICE}
+        authoritative_facts = f"""
+AUTORITATIV INFORMASJON (GJELDER ALLTID):
+- Frisørutdanningen hos Adam og Eva koster {SCHOOL_PRICE}
 - Skolen er støttet av Lånekassen
-- Lenke til Lånekassen: {LANEKASSEN_URL}
+- Lånekassen: {LANEKASSEN_URL}
 """
+        references.append(LANEKASSEN_URL)
 
     system_prompt = f"""
 Du er kundeservice-chatbot for {brand_conf["name"]}.
-Du skal ALLTID svare på norsk.
+Svar ALLTID på norsk.
 
-REGLER (MÅ FØLGES):
-- Bruk KUN informasjon som finnes i teksten nedenfor.
-- Ikke spekuler, ikke forklar, ikke utvid.
-- Hvis svaret ikke finnes: si at du ikke fant informasjon.
-- Inkluder ALLTID lenke til aktuell side når du svarer.
-- Ikke vis salonglenker med mindre bruker spør om salong.
-- Skill mellom elev (Akademiet) og lærling (salong).
+VIKTIGE REGLER:
+- Du kan bruke informasjon fra TO kilder:
+  1) AUTORITATIV INFORMASJON (øverst)
+  2) NETTSIDETEKST (nedenfor)
+- Ikke spekuler utover disse.
+- Hvis svaret ikke finnes i noen av dem, si det tydelig.
+- Inkluder relevante lenker i svaret.
 
-{extra_facts}
+{authoritative_facts}
 
 NETTSIDETEKST (fra {url}):
 {scraped_text}
 """
+
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": question}
+        ]
+    )
+
+    return {
+        "answer": resp.choices[0].message.content.strip(),
+        "references": references
+    }
+
+
 
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
