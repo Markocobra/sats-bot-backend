@@ -1,21 +1,27 @@
 from flask import Flask, request, jsonify
 from openai import OpenAI
+from dotenv import load_dotenv
+
 import os
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 
 # -------------------------
+# LOAD ENV (.env)
+# -------------------------
+load_dotenv()
+
+# -------------------------
 # APP & OPENAI
 # -------------------------
-
 app = Flask(__name__)
+
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # -------------------------
 # KONFIG
 # -------------------------
-
 LANEKASSEN_URL = "https://lanekassen.no/nb-NO/"
 SCHOOL_PRICE = "89 000 kr"
 
@@ -28,10 +34,10 @@ CONFIG = {
             "booking": "https://adamogeva.no/bestill-time/",
             "salon_info": "https://adamogeva.no/salonger/",
             "academy": "https://akademiet.adamogeva.no/",
-            "school": "https://adamogeva.no/skolen/",
+            "school": "https://akademiet.adamogeva.no/",
             "apprenticeship": "https://adamogeva.no/salonger/",
-            "contact": "https://adamogeva.no/kontakt-oss/"
-        }
+            "contact": "https://adamogeva.no/kontakt-oss/",
+        },
     }
 }
 
@@ -40,7 +46,6 @@ DEFAULT_BRAND = "adam_og_eva"
 # -------------------------
 # HJELPEFUNKSJONER
 # -------------------------
-
 def scrape_page_text(url: str) -> str:
     try:
         r = requests.get(url, timeout=10)
@@ -124,12 +129,17 @@ REGLER:
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ]
+            {"role": "user", "content": question},
+        ],
     )
 
     label = resp.choices[0].message.content.strip().lower()
-    return label if label in CONFIG[DEFAULT_BRAND]["intents"] else "general"
+
+    # bare returner label hvis den finnes i intents
+    if label in CONFIG[DEFAULT_BRAND]["intents"]:
+        return label
+
+    return "general"
 
 
 def build_answer(question: str, brand_conf: dict, intent: str) -> dict:
@@ -183,34 +193,33 @@ INNHOLD:
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ]
+            {"role": "user", "content": question},
+        ],
     )
 
     return {
         "answer": resp.choices[0].message.content.strip(),
-        "references": list(set(references))
+        "references": list(set(references)),
     }
+
 
 # -------------------------
 # ROUTES
 # -------------------------
-
 @app.route("/fetch-answer", methods=["POST"])
 def fetch_answer():
     data = request.json or {}
 
     brand_key = data.get("brand") or DEFAULT_BRAND
-    brand_conf = CONFIG[brand_key]
+    brand_conf = CONFIG.get(brand_key, CONFIG[DEFAULT_BRAND])
 
- question = (
-    data.get("user_input")   # Landbot
-    or data.get("message")
-    or data.get("text")
-    or data.get("question")
-    or ""
-).strip()
-
+    question = (
+        data.get("user_input")   # Landbot
+        or data.get("message")
+        or data.get("text")
+        or data.get("question")
+        or ""
+    ).strip()
 
     if not question:
         return jsonify({
@@ -224,7 +233,7 @@ def fetch_answer():
         "timestamp": datetime.utcnow().isoformat(),
         "question": question,
         "intent": intent,
-        "references": result["references"]
+        "references": result["references"],
     })
 
     return jsonify(result)
@@ -235,5 +244,9 @@ def home():
     return "Adam og Eva chatbot-backend kjører."
 
 
+# -------------------------
+# RUN SERVER
+# -------------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
