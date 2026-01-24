@@ -214,17 +214,23 @@ def fetch_answer():
     brand_conf = CONFIG.get(brand_key, CONFIG[DEFAULT_BRAND])
 
     question = (
-        data.get("user_input")   # Landbot
-        or data.get("message")
-        or data.get("text")
-        or data.get("question")
-        or ""
-    ).strip()
+    data.get("user_input")
+    or data.get("text")
+    or data.get("question")
+    or ""
+).strip()
+
+    if not question and isinstance(data.get("message"), dict):
+        question = (data["message"].get("text") or "").strip()
+
+    if not question and isinstance(data.get("message"), str):
+        question = data["message"].strip()
 
     if not question:
         return jsonify({
             "answer": "Hei, og velkommen til Adam og Eva kundeservice-chatbot! Still meg et spørsmål, så svarer jeg deg."
         })
+
 
     intent = classify_intent(question, brand_conf["name"])
     result = build_answer(question, brand_conf, intent)
